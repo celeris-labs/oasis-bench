@@ -10,7 +10,8 @@
 #include <vector>
 
 #include <duckdb.hpp>
-#include <duckdb/common/enums/metric_type.hpp>
+#include <duckdb/main/profiler/profiling_node.hpp>
+#include <duckdb/main/query_profiler.hpp>
 
 #include "common.hpp"
 
@@ -69,16 +70,16 @@ Statistics median(std::vector<Statistics> values) {
 
 OperatorBreakdown traverse(const duckdb::ProfilingNode &node) {
     OperatorBreakdown stats;
-    auto             &info = node.GetProfilingInfo();
+    auto             &info = node.GetOperatorMetrics();
 
-    std::string type     = info.GetMetricValue<std::string>(duckdb::MetricType::OPERATOR_NAME);
-    auto        cpu_time = info.GetMetricValue<double>(duckdb::MetricType::OPERATOR_TIMING);
+    const std::string &type     = info.name;
+    double             cpu_time = info.time;
 
     if (type == "HASH_JOIN" || type == "LEFT_DELIM_JOIN" || type == "RIGHT_DELIM_JOIN" ||
         type == "NESTED_LOOP_JOIN" || type == "CROSS_PRODUCT" || type == "PIECEWISE_MERGE_JOIN") {
         stats.join += cpu_time;
     } else if (type == "SEQ_SCAN" || type == "READ_PARQUET" || type == "COLUMN_DATA_SCAN" ||
-               type == "DELIM_SCAN" || type == "DUMMY_SCAN" || type == "READ_OASIS") {
+               type == "DELIM_SCAN" || type == "DUMMY_SCAN" || type == "TABLE_SCAN") {
         stats.scan += cpu_time;
     } else if (type == "FILTER") {
         stats.filter += cpu_time;
@@ -92,16 +93,12 @@ OperatorBreakdown traverse(const duckdb::ProfilingNode &node) {
     } else if (type == "CTE" || type == "CTE_SCAN" || type == "UNION" ||
                type == "STREAMING_LIMIT") {
         stats.other += cpu_time;
-    } else if (type == "") {
-        // NOP
+    } else if (type == "" || type == "RESULT_COLLECTOR") {
+        // NOP: empty nodes and the root result collector sink are not real
+        // operators and carry no meaningful operator time.
     } else {
         std::cout << "Unknown type " << type << std::endl;
         stats.other += cpu_time;
-    }
-
-    // Recurse into children
-    for (auto &child : node.children) {
-        stats += traverse(*child);
     }
 
     return stats;
@@ -176,22 +173,28 @@ std::vector<QueryResult> run_benchmark(const Config                &config,
             while (r->Fetch()) {}
             double elapsed = timer.stop_seconds();
 
-            // Get statistics
-            auto profiling_tree = con.GetProfilingTree();
-            if (!profiling_tree) {
+            // Get statistics.
+            auto &profiler = duckdb::QueryProfiler::Get(*con.context);
+            if (!profiler.HasRoot()) {
                 throw std::runtime_error("Profiling tree is null for query: " + query_path.string());
             }
-            auto profiling_info = profiling_tree->GetProfilingInfo();
 
             Statistics stat;
-            stat.runtime  = elapsed;
-            stat.latency  = profiling_info.GetMetricValue<double>(duckdb::MetricType::LATENCY);
-            stat.cpu_time = profiling_info.GetMetricValue<double>(duckdb::MetricType::CPU_TIME);
-            stat.rows_scanned =
-                profiling_info.GetMetricValue<size_t>(duckdb::MetricType::CUMULATIVE_ROWS_SCANNED);
-            stat.memory_footprint = profiling_info.GetMetricValue<size_t>(
-                duckdb::MetricType::SYSTEM_PEAK_BUFFER_MEMORY);
-            stat.ops = traverse(*profiling_tree);
+            stat.runtime          = elapsed;
+            stat.latency          = elapsed;
+            stat.cpu_time         = 0;
+            stat.rows_scanned     = 0;
+            stat.memory_footprint = 0;
+
+            for (const auto &entry : profiler.GetTreeMap()) {
+                const auto &node = entry.second.get();
+                const auto &info = node.GetOperatorMetrics();
+                stat.ops += traverse(node);
+                stat.cpu_time += info.time;
+                stat.rows_scanned += info.rows_scanned;
+                stat.memory_footprint =
+                    std::max<size_t>(stat.memory_footprint, info.system_peak_buffer_manager_memory);
+            }
             stats.push_back(stat);
         }
 

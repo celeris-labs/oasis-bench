@@ -27,8 +27,11 @@ else()
 
     # DuckDB uses directory-scoped include_directories() internally, which do
     # not propagate to consumers via target_link_libraries. Expose the public
-    # header directory so our targets can find <duckdb.hpp>.
+    # header directory so our targets can find <duckdb.hpp>. Newer DuckDB
+    # versions also reference bundled fmt headers (fmt/core.h) from public
+    # headers, so expose third_party/fmt/include too.
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/fmt/include)
 
     set(DUCKDB_TARGET duckdb)
 endif()

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <mutex>
 #include <numeric>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -45,6 +46,7 @@ class QueryStream {
         std::mt19937 g(stream_id);
         std::shuffle(queries_.begin(), queries_.end(), g);
 
+        con_.Query("SET enable_external_file_cache TO false");
         con_.Query("SET parquet_metadata_cache TO true");
     }
 
