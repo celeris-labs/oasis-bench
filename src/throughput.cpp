@@ -22,6 +22,7 @@
 
 struct Config {
     std::string           data_dir    = "/mnt/ramdisk";
+    std::string           ip          = ""; // RDMA server IP (rdma:// data dir)
     Benchmark             benchmark   = Benchmark::TPCH;
     Source                source      = Source::PARQUET;
     std::vector<uint32_t> threads{1};
@@ -45,9 +46,6 @@ class QueryStream {
         : stream_id_(stream_id), con_(*db), queries_(queries) {
         std::mt19937 g(stream_id);
         std::shuffle(queries_.begin(), queries_.end(), g);
-
-        con_.Query("SET enable_external_file_cache TO false");
-        con_.Query("SET parquet_metadata_cache TO true");
     }
 
     void run() {
@@ -140,7 +138,9 @@ void print_usage(const char *prog) {
               << "  -t, --threads N       Number of DuckDB threads as range \"1-8\",\n"
               << "                        list \"1,2,4\", or single value (default: 1)\n"
               << "  -S, --streams N       Number of concurrent query streams (default: 2)\n"
-              << "  -d, --data-dir DIR    Data directory (default: /mnt/ramdisk)\n"
+              << "  -d, --data-dir DIR    Data directory or \"rdma://\" for a remote RDMA\n"
+              << "                        server (default: /mnt/ramdisk)\n"
+              << "  -i, --ip ADDR         RDMA server IP (required for rdma:// data dir)\n"
               << "  -h, --help            Show this help message\n";
 }
 
@@ -153,11 +153,12 @@ Config parse_args(int argc, char *argv[]) {
                                            {"threads", required_argument, 0, 't'},
                                            {"streams", required_argument, 0, 'S'},
                                            {"data-dir", required_argument, 0, 'd'},
+                                           {"ip", required_argument, 0, 'i'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "b:s:r:t:S:d:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:s:r:t:S:d:i:h", long_options, nullptr)) != -1) {
         switch (opt) {
         case 'b':
             config.benchmark = string_to_benchmark(optarg);
@@ -182,6 +183,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'd':
             config.data_dir = optarg;
+            break;
+        case 'i':
+            config.ip = optarg;
             break;
         case 'h':
             print_usage(argv[0]);
@@ -219,6 +223,7 @@ void write_json(uint32_t num_threads, const Config &config, std::vector<double> 
     out << "    \"threads\": " << num_threads << ",\n";
     out << "    \"streams\": " << config.streams << ",\n";
     out << "    \"data_dir\": \"" << config.data_dir << "\",\n";
+    out << "    \"ip\": \"" << config.ip << "\",\n";
     out << "    \"benchmark\": \"" << benchmark_to_string(config.benchmark) << "\",\n";
     out << "    \"source\": \"" << source_to_string(config.source) << "\",\n";
     out << "    \"repetitions\": " << config.repetitions << "\n";
@@ -249,15 +254,7 @@ int main(int argc, char *argv[]) {
     auto               db = std::make_shared<duckdb::DuckDB>(nullptr, &duck_config);
     duckdb::Connection setup_con(*db);
 
-    // Load oasis extension (provides read_oasis)
-    if (config.source == Source::OASIS) {
-        auto ext = setup_con.Query(
-            "LOAD '/local/home/jodann/oasis-bench/extension/oasis.duckdb_extension'");
-        if (ext->HasError()) {
-            std::cerr << "Failed to load oasis extension: " << ext->GetError() << std::endl;
-            exit(1);
-        }
-    }
+    global_setup(setup_con, is_rdma_dir(config.data_dir), config.source, config.ip);
 
     std::cout << "Loading data..." << std::endl;
     load_data(setup_con, config.data_dir, config.benchmark, config.source);
@@ -268,8 +265,9 @@ int main(int argc, char *argv[]) {
 
         std::cout << "Running throughput benchmark for " << std::to_string(num_threads)
                   << " thread(s)..." << std::endl;
-        auto result = run_throughput_benchmark(db, config.streams, config.repetitions, queries,
-                                               config.source == Source::OASIS);
+        bool print_profile = config.source == Source::OASIS;
+        auto result        = run_throughput_benchmark(db, config.streams, config.repetitions,
+                                                      queries, print_profile);
 
         std::string output_file =
             "measurements/throughput/" +

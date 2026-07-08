@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # Sources to sweep over.
-SOURCES=(memory parquet oasis)
+SOURCES=(parquet oasis)
 
 # Thread counts to sweep over.
-THREADS=(1 2 4 8 16)
+THREADS=($(seq 1 64))
 
 for s in "${SOURCES[@]}"; do
     for t in "${THREADS[@]}"; do
@@ -13,6 +13,6 @@ for s in "${SOURCES[@]}"; do
         cores="64-$((64 + t - 1))"
 
         echo "=== source=${s} threads=${t} cores=${cores} ==="
-        numactl -m 1 -C "${cores}" ./build/throughput -s "${s}" -r 1 -t "${t}" -S 4
+        numactl -m 1 -C "${cores}" ./build/throughput -s "${s}" -r 1 -t "${t}" -S 4 -d rdma:// -i <ip-address>
     done
 done

@@ -58,6 +58,10 @@ Source string_to_source(const std::string &s) {
     throw std::runtime_error("Unknown source: " + s);
 }
 
+bool is_rdma_dir(const std::string &data_dir) {
+    return data_dir.rfind("rdma://", 0) == 0;
+}
+
 // ============================================================================
 // High-resolution timer
 // ============================================================================
@@ -76,6 +80,34 @@ class Timer {
   private:
     std::chrono::high_resolution_clock::time_point start_time_;
 };
+
+// ============================================================================
+// Global Setup
+// ============================================================================
+
+void global_setup(duckdb::Connection &con, bool rdma, Source source,
+                  const std::string &rdma_ip = "") {
+    con.Query("SET GLOBAL enable_external_file_cache TO false");
+    con.Query("SET GLOBAL parquet_metadata_cache TO true");
+
+    if (source == Source::OASIS || rdma) {
+        auto ext =
+            con.Query("LOAD '/local/home/jodann/oasis-bench/extension/oasis.duckdb_extension'");
+        if (ext->HasError()) {
+            throw std::runtime_error("Failed to load oasis extension: " + ext->GetError());
+        }
+
+        if (rdma) {
+            if (rdma_ip.empty()) {
+                throw std::runtime_error("RDMA data dir requires a server IP address (--ip)");
+            }
+            auto set_r = con.Query("SET oasis_rdma_server TO '" + rdma_ip + "'");
+            if (set_r->HasError()) {
+                throw std::runtime_error("Failed to set RDMA server: " + set_r->GetError());
+            }
+        }
+    }
+}
 
 // ============================================================================
 // Data Loading
@@ -97,26 +129,21 @@ std::vector<fs::path> get_queries(Benchmark benchmark) {
     return queries;
 }
 
-void load_data(duckdb::Connection &con, const std::string &data_dir, Benchmark benchmark, Source source) {
-    if (!fs::exists(data_dir) || !fs::is_directory(data_dir)) {
-        throw std::runtime_error("Data directory does not exist: " + data_dir);
+// Table names per benchmark. Used for RDMA data dirs, where there is no local
+// directory to enumerate.
+std::vector<std::string> get_table_names(Benchmark benchmark) {
+    switch (benchmark) {
+    case Benchmark::TPCH:
+        return {"customer", "lineitem", "nation",   "orders",
+                "part",     "partsupp", "region",   "supplier"};
+    case Benchmark::CLICKBENCH:
+        return {"hits"};
     }
+    throw std::runtime_error("Unknown benchmark!");
+}
 
-    // All sources read from Parquet files
-    std::string extension = ".parquet";
-
-    std::vector<std::string> tables;
-    for (const auto &entry : fs::directory_iterator(data_dir)) {
-        if (entry.path().extension() == extension) {
-            tables.push_back(entry.path().stem().string());
-        }
-    }
-    std::sort(tables.begin(), tables.end());
-
-    if (tables.size() == 0) {
-        throw std::runtime_error("No input data in: " + data_dir);
-    }
-
+void load_data(duckdb::Connection &con, const std::string &data_dir, Benchmark benchmark,
+               Source source) {
     std::string replace_cols =
         (benchmark == Benchmark::CLICKBENCH)
             ? " REPLACE(make_date(EventDate) AS EventDate, epoch_ms(EventTime * 1000) AS "
@@ -124,8 +151,35 @@ void load_data(duckdb::Connection &con, const std::string &data_dir, Benchmark b
               "epoch_ms(LocalEventTime * 1000) AS LocalEventTime)"
             : "";
 
+    // All sources read from Parquet files
+    std::string extension = ".parquet";
+
+    std::vector<std::string> tables;
+    std::string              path_prefix;
+    if (is_rdma_dir(data_dir)) {
+        tables      = get_table_names(benchmark);
+        path_prefix = "rdma://";
+    } else {
+        if (!fs::exists(data_dir) || !fs::is_directory(data_dir)) {
+            throw std::runtime_error("Data directory does not exist: " + data_dir);
+        }
+
+        for (const auto &entry : fs::directory_iterator(data_dir)) {
+            if (entry.path().extension() == extension) {
+                tables.push_back(entry.path().stem().string());
+            }
+        }
+        std::sort(tables.begin(), tables.end());
+
+        if (tables.size() == 0) {
+            throw std::runtime_error("No input data in: " + data_dir);
+        }
+
+        path_prefix = data_dir + "/";
+    }
+
     for (const auto &table : tables) {
-        std::string path = data_dir + "/" + table + extension;
+        std::string path = path_prefix + table + extension;
         std::string sql;
         switch (source) {
         case Source::PARQUET:

@@ -21,6 +21,7 @@
 
 struct Config {
     std::string data_dir    = "/mnt/ramdisk";
+    std::string ip          = ""; // RDMA server IP (rdma:// data dir)
     Benchmark   benchmark   = Benchmark::TPCH;
     Source      source      = Source::PARQUET;
     int         threads     = 1;
@@ -123,16 +124,7 @@ std::vector<QueryResult> run_benchmark(const Config                &config,
     duckdb::DuckDB     db(nullptr, &duck_config); // In-memory database
     duckdb::Connection con(db);
 
-    con.Query("SET parquet_metadata_cache TO true");
-
-    // Load oasis extension (provides read_oasis)
-    if (config.source == Source::OASIS) {
-        auto ext = con.Query("LOAD 'extension/oasis.duckdb_extension'");
-        if (ext->HasError()) {
-            std::cerr << "Failed to load oasis extension: " << ext->GetError() << std::endl;
-            exit(1);
-        }
-    }
+    global_setup(con, is_rdma_dir(config.data_dir), config.source, config.ip);
 
     // Load data
     std::cout << "Loading data..." << std::endl;
@@ -220,7 +212,9 @@ void print_usage(const char *prog) {
               << "  -s, --source SRC      Input source: parquet, memory, oasis (default: parquet)\n"
               << "  -r, --repetitions N   Number of repetitions per query (default: 5)\n"
               << "  -t, --threads N       Number of threads (default: 1)\n"
-              << "  -d, --data-dir DIR    Data directory (default: /mnt/ramdisk)\n"
+              << "  -d, --data-dir DIR    Data directory or \"rdma://\" for a remote RDMA\n"
+              << "                        server (default: /mnt/ramdisk)\n"
+              << "  -i, --ip ADDR         RDMA server IP (required for rdma:// data dir)\n"
               << "  -h, --help            Show this help message\n";
 }
 
@@ -232,11 +226,12 @@ Config parse_args(int argc, char *argv[]) {
                                            {"repetitions", required_argument, 0, 'r'},
                                            {"threads", required_argument, 0, 't'},
                                            {"data-dir", required_argument, 0, 'd'},
+                                           {"ip", required_argument, 0, 'i'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "b:s:r:t:d:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:s:r:t:d:i:h", long_options, nullptr)) != -1) {
         switch (opt) {
         case 'b':
             config.benchmark = string_to_benchmark(optarg);
@@ -252,6 +247,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'd':
             config.data_dir = optarg;
+            break;
+        case 'i':
+            config.ip = optarg;
             break;
         case 'h':
             print_usage(argv[0]);
@@ -288,6 +286,7 @@ void write_json(const Config &config, const std::vector<QueryResult> &results,
         out << "        \"memory_footprint_bytes\": " << r.stats.memory_footprint << ",\n";
         out << "        \"rows_scanned\": " << r.stats.rows_scanned << ",\n";
         out << "        \"data_dir\": \"" << config.data_dir << "\",\n";
+        out << "        \"ip\": \"" << config.ip << "\",\n";
         out << "        \"benchmark\": \"" << benchmark_to_string(config.benchmark) << "\",\n";
         out << "        \"source\": \"" << source_to_string(config.source) << "\",\n";
         out << "        \"threads\": " << config.threads << ",\n";
