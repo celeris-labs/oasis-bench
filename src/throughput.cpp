@@ -257,7 +257,10 @@ int main(int argc, char *argv[]) {
     global_setup(setup_con, is_rdma_dir(config.data_dir), config.source, config.ip);
 
     std::cout << "Loading data..." << std::endl;
-    load_data(setup_con, config.data_dir, config.benchmark, config.source);
+    auto tables = load_data(setup_con, config.data_dir, config.benchmark, config.source);
+
+    std::cout << "Warming metadata cache..." << std::endl;
+    warm_metadata_cache(setup_con, tables);
 
     // Run benchmark
     for (uint32_t num_threads : config.threads) {

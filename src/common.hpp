@@ -142,8 +142,8 @@ std::vector<std::string> get_table_names(Benchmark benchmark) {
     throw std::runtime_error("Unknown benchmark!");
 }
 
-void load_data(duckdb::Connection &con, const std::string &data_dir, Benchmark benchmark,
-               Source source) {
+std::vector<std::string> load_data(duckdb::Connection &con, const std::string &data_dir,
+                                   Benchmark benchmark, Source source) {
     std::string replace_cols =
         (benchmark == Benchmark::CLICKBENCH)
             ? " REPLACE(make_date(EventDate) AS EventDate, epoch_ms(EventTime * 1000) AS "
@@ -199,6 +199,19 @@ void load_data(duckdb::Connection &con, const std::string &data_dir, Benchmark b
         auto r = con.Query(sql);
         if (r->HasError()) {
             throw std::runtime_error("Failed to load table '" + table + "': " + r->GetError());
+        }
+    }
+
+    return tables;
+}
+
+// Run a COUNT(*) on every table to warm the Parquet metadata cache, so the
+// first timed query does not pay the metadata read.
+void warm_metadata_cache(duckdb::Connection &con, const std::vector<std::string> &tables) {
+    for (const auto &table : tables) {
+        auto r = con.Query("SELECT COUNT(*) FROM " + table);
+        if (r->HasError()) {
+            throw std::runtime_error("Failed to warm table '" + table + "': " + r->GetError());
         }
     }
 }

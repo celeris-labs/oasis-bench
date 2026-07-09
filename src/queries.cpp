@@ -128,7 +128,10 @@ std::vector<QueryResult> run_benchmark(const Config                &config,
 
     // Load data
     std::cout << "Loading data..." << std::endl;
-    load_data(con, config.data_dir, config.benchmark, config.source);
+    auto tables = load_data(con, config.data_dir, config.benchmark, config.source);
+
+    std::cout << "Warming metadata cache..." << std::endl;
+    warm_metadata_cache(con, tables);
 
     con.Query("SET threads TO " + std::to_string(config.threads));
 
