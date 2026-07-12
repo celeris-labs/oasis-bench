@@ -27,7 +27,8 @@ struct Config {
     Source                source      = Source::PARQUET;
     std::vector<uint32_t> threads{1};
     uint32_t              repetitions = 5;
-    uint32_t              streams     = 2; // Number of concurrent query streams
+    uint32_t              streams     = 2; // Number of concurrent query streams (clients)
+    uint32_t              decoders    = 0; // oasis_scheduler_num_streams (0 = extension default)
 };
 
 // ============================================================================
@@ -138,6 +139,8 @@ void print_usage(const char *prog) {
               << "  -t, --threads N       Number of DuckDB threads as range \"1-8\",\n"
               << "                        list \"1,2,4\", or single value (default: 1)\n"
               << "  -S, --streams N       Number of concurrent query streams (default: 2)\n"
+              << "  -n, --decoders N      Hardware decoders (oasis_scheduler_num_streams,\n"
+              << "                        Oasis only; default: extension default)\n"
               << "  -d, --data-dir DIR    Data directory or \"rdma://\" for a remote RDMA\n"
               << "                        server (default: /mnt/ramdisk)\n"
               << "  -i, --ip ADDR         RDMA server IP (required for rdma:// data dir)\n"
@@ -152,13 +155,14 @@ Config parse_args(int argc, char *argv[]) {
                                            {"repetitions", required_argument, 0, 'r'},
                                            {"threads", required_argument, 0, 't'},
                                            {"streams", required_argument, 0, 'S'},
+                                           {"decoders", required_argument, 0, 'n'},
                                            {"data-dir", required_argument, 0, 'd'},
                                            {"ip", required_argument, 0, 'i'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "b:s:r:t:S:d:i:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:s:r:t:S:n:d:i:h", long_options, nullptr)) != -1) {
         switch (opt) {
         case 'b':
             config.benchmark = string_to_benchmark(optarg);
@@ -180,6 +184,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'S':
             config.streams = std::stoi(optarg);
+            break;
+        case 'n':
+            config.decoders = std::stoi(optarg);
             break;
         case 'd':
             config.data_dir = optarg;
@@ -222,6 +229,7 @@ void write_json(uint32_t num_threads, const Config &config, std::vector<double> 
     out << "],\n";
     out << "    \"threads\": " << num_threads << ",\n";
     out << "    \"streams\": " << config.streams << ",\n";
+    out << "    \"decoders\": " << config.decoders << ",\n";
     out << "    \"data_dir\": \"" << config.data_dir << "\",\n";
     out << "    \"ip\": \"" << config.ip << "\",\n";
     out << "    \"benchmark\": \"" << benchmark_to_string(config.benchmark) << "\",\n";
@@ -254,7 +262,8 @@ int main(int argc, char *argv[]) {
     auto               db = std::make_shared<duckdb::DuckDB>(nullptr, &duck_config);
     duckdb::Connection setup_con(*db);
 
-    global_setup(setup_con, is_rdma_dir(config.data_dir), config.source, config.ip);
+    global_setup(setup_con, is_rdma_dir(config.data_dir), config.source, config.ip,
+                 config.decoders);
 
     std::cout << "Loading data..." << std::endl;
     auto tables = load_data(setup_con, config.data_dir, config.benchmark, config.source);

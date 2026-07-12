@@ -85,8 +85,9 @@ class Timer {
 // Global Setup
 // ============================================================================
 
+// decoders == 0 leaves oasis_scheduler_num_streams at the extension default.
 void global_setup(duckdb::Connection &con, bool rdma, Source source,
-                  const std::string &rdma_ip = "") {
+                  const std::string &rdma_ip = "", uint32_t decoders = 0) {
     con.Query("SET GLOBAL enable_external_file_cache TO false");
     con.Query("SET GLOBAL parquet_metadata_cache TO true");
 
@@ -95,6 +96,15 @@ void global_setup(duckdb::Connection &con, bool rdma, Source source,
             con.Query("LOAD '/local/home/jodann/oasis-bench/extension/oasis.duckdb_extension'");
         if (ext->HasError()) {
             throw std::runtime_error("Failed to load oasis extension: " + ext->GetError());
+        }
+
+        if (decoders > 0) {
+            auto set_s = con.Query("SET oasis_scheduler_num_streams TO " +
+                                   std::to_string(decoders));
+            if (set_s->HasError()) {
+                throw std::runtime_error("Failed to set oasis_scheduler_num_streams: " +
+                                         set_s->GetError());
+            }
         }
 
         if (rdma) {

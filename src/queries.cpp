@@ -26,6 +26,7 @@ struct Config {
     Source      source      = Source::PARQUET;
     int         threads     = 1;
     int         repetitions = 5;
+    uint32_t    decoders = 0; // oasis_scheduler_num_streams (0 = extension default)
 };
 
 // ============================================================================
@@ -124,7 +125,8 @@ std::vector<QueryResult> run_benchmark(const Config                &config,
     duckdb::DuckDB     db(nullptr, &duck_config); // In-memory database
     duckdb::Connection con(db);
 
-    global_setup(con, is_rdma_dir(config.data_dir), config.source, config.ip);
+    global_setup(con, is_rdma_dir(config.data_dir), config.source, config.ip,
+                 config.decoders);
 
     // Load data
     std::cout << "Loading data..." << std::endl;
@@ -215,6 +217,8 @@ void print_usage(const char *prog) {
               << "  -s, --source SRC      Input source: parquet, memory, oasis (default: parquet)\n"
               << "  -r, --repetitions N   Number of repetitions per query (default: 5)\n"
               << "  -t, --threads N       Number of threads (default: 1)\n"
+              << "  -n, --decoders N      Hardware decoders (oasis_scheduler_num_streams,\n"
+              << "                        Oasis only; default: extension default)\n"
               << "  -d, --data-dir DIR    Data directory or \"rdma://\" for a remote RDMA\n"
               << "                        server (default: /mnt/ramdisk)\n"
               << "  -i, --ip ADDR         RDMA server IP (required for rdma:// data dir)\n"
@@ -228,13 +232,14 @@ Config parse_args(int argc, char *argv[]) {
                                            {"source", required_argument, 0, 's'},
                                            {"repetitions", required_argument, 0, 'r'},
                                            {"threads", required_argument, 0, 't'},
+                                           {"decoders", required_argument, 0, 'n'},
                                            {"data-dir", required_argument, 0, 'd'},
                                            {"ip", required_argument, 0, 'i'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "b:s:r:t:d:i:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:s:r:t:n:d:i:h", long_options, nullptr)) != -1) {
         switch (opt) {
         case 'b':
             config.benchmark = string_to_benchmark(optarg);
@@ -247,6 +252,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 't':
             config.threads = std::stoi(optarg);
+            break;
+        case 'n':
+            config.decoders = std::stoi(optarg);
             break;
         case 'd':
             config.data_dir = optarg;
@@ -293,6 +301,7 @@ void write_json(const Config &config, const std::vector<QueryResult> &results,
         out << "        \"benchmark\": \"" << benchmark_to_string(config.benchmark) << "\",\n";
         out << "        \"source\": \"" << source_to_string(config.source) << "\",\n";
         out << "        \"threads\": " << config.threads << ",\n";
+        out << "        \"decoders\": " << config.decoders << ",\n";
         out << "        \"repetitions\": " << config.repetitions << ",\n";
         out << "        \"operators\": {\n";
         out << "            \"scan\": " << std::fixed << std::setprecision(6) << r.stats.ops.scan
