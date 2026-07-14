@@ -33,14 +33,35 @@ struct Config {
 // Statistics
 // ============================================================================
 
+struct OperatorMetric {
+    double   time        = 0; // CPU seconds summed over all workers
+    uint64_t cardinality = 0; // rows returned by the operator
+
+    void add(double t, uint64_t c) {
+        time += t;
+        cardinality += c;
+    }
+
+    OperatorMetric &operator+=(const OperatorMetric &rhs) {
+        time += rhs.time;
+        cardinality += rhs.cardinality;
+        return *this;
+    }
+};
+
 struct OperatorBreakdown {
-    double scan        = 0;
-    double filter      = 0;
-    double projection  = 0;
-    double join        = 0;
-    double aggregation = 0;
-    double sort        = 0;
-    double other       = 0;
+    OperatorMetric scan;
+    OperatorMetric filter;
+    OperatorMetric projection;
+    OperatorMetric join;
+    OperatorMetric aggregation;
+    OperatorMetric sort;
+    OperatorMetric other;
+
+    // Within-scan breakdown reported by the Oasis extension via extra_info
+    // (CPU seconds summed over all workers; 0 for other sources).
+    double scan_filter   = 0;
+    double string_decode = 0;
 
     OperatorBreakdown &operator+=(const OperatorBreakdown &rhs) {
         scan += rhs.scan;
@@ -50,8 +71,21 @@ struct OperatorBreakdown {
         aggregation += rhs.aggregation;
         sort += rhs.sort;
         other += rhs.other;
+        scan_filter += rhs.scan_filter;
+        string_decode += rhs.string_decode;
         return *this;
     }
+};
+
+// Named accessors for iterating the per-operator fields when writing JSON.
+constexpr std::pair<const char *, OperatorMetric OperatorBreakdown::*> OPERATOR_FIELDS[] = {
+    {"scan", &OperatorBreakdown::scan},
+    {"filter", &OperatorBreakdown::filter},
+    {"projection", &OperatorBreakdown::projection},
+    {"join", &OperatorBreakdown::join},
+    {"aggregation", &OperatorBreakdown::aggregation},
+    {"sort", &OperatorBreakdown::sort},
+    {"other", &OperatorBreakdown::other},
 };
 
 struct Statistics {
@@ -70,37 +104,50 @@ Statistics median(std::vector<Statistics> values) {
     return values[values.size() / 2];
 };
 
+// Parse a "%.4fs" duration from extra_info; 0 if the key is absent.
+double extra_info_seconds(const duckdb::InsertionOrderPreservingMap<std::string> &extra_info,
+                          const std::string                                      &key) {
+    auto it = extra_info.find(key);
+    return it == extra_info.end() ? 0 : std::stod(it->second);
+}
+
 OperatorBreakdown traverse(const duckdb::ProfilingNode &node) {
     OperatorBreakdown stats;
     auto             &info = node.GetOperatorMetrics();
 
-    const std::string &type     = info.name;
-    double             cpu_time = info.time;
+    const std::string &type        = info.name;
+    double             cpu_time    = info.time;
+    uint64_t           cardinality = info.elements_returned;
+
+    // Oasis scan timers (only the Oasis scan operator sets these keys).
+    const auto &extra_info = info.GetExtraInfo();
+    stats.scan_filter      = extra_info_seconds(extra_info, "Filter Time");
+    stats.string_decode    = extra_info_seconds(extra_info, "String Decode Time");
 
     if (type == "HASH_JOIN" || type == "LEFT_DELIM_JOIN" || type == "RIGHT_DELIM_JOIN" ||
         type == "NESTED_LOOP_JOIN" || type == "CROSS_PRODUCT" || type == "PIECEWISE_MERGE_JOIN") {
-        stats.join += cpu_time;
+        stats.join.add(cpu_time, cardinality);
     } else if (type == "SEQ_SCAN" || type == "READ_PARQUET" || type == "COLUMN_DATA_SCAN" ||
                type == "DELIM_SCAN" || type == "DUMMY_SCAN" || type == "TABLE_SCAN") {
-        stats.scan += cpu_time;
+        stats.scan.add(cpu_time, cardinality);
     } else if (type == "FILTER") {
-        stats.filter += cpu_time;
+        stats.filter.add(cpu_time, cardinality);
     } else if (type == "PROJECTION") {
-        stats.projection += cpu_time;
+        stats.projection.add(cpu_time, cardinality);
     } else if (type == "HASH_GROUP_BY" || type == "PERFECT_HASH_GROUP_BY" ||
                type == "UNGROUPED_AGGREGATE" || type == "WINDOW") {
-        stats.aggregation += cpu_time;
+        stats.aggregation.add(cpu_time, cardinality);
     } else if (type == "ORDER_BY" || type == "TOP_N") {
-        stats.sort += cpu_time;
+        stats.sort.add(cpu_time, cardinality);
     } else if (type == "CTE" || type == "CTE_SCAN" || type == "UNION" ||
                type == "STREAMING_LIMIT") {
-        stats.other += cpu_time;
+        stats.other.add(cpu_time, cardinality);
     } else if (type == "" || type == "RESULT_COLLECTOR") {
         // NOP: empty nodes and the root result collector sink are not real
         // operators and carry no meaningful operator time.
     } else {
         std::cout << "Unknown type " << type << std::endl;
-        stats.other += cpu_time;
+        stats.other.add(cpu_time, cardinality);
     }
 
     return stats;
@@ -303,22 +350,29 @@ void write_json(const Config &config, const std::vector<QueryResult> &results,
         out << "        \"threads\": " << config.threads << ",\n";
         out << "        \"decoders\": " << config.decoders << ",\n";
         out << "        \"repetitions\": " << config.repetitions << ",\n";
-        out << "        \"operators\": {\n";
-        out << "            \"scan\": " << std::fixed << std::setprecision(6) << r.stats.ops.scan
-            << ",\n";
-        out << "            \"filter\": " << std::fixed << std::setprecision(6)
-            << r.stats.ops.filter << ",\n";
-        out << "            \"projection\": " << std::fixed << std::setprecision(6)
-            << r.stats.ops.projection << ",\n";
-        out << "            \"join\": " << std::fixed << std::setprecision(6) << r.stats.ops.join
-            << ",\n";
-        out << "            \"aggregation\": " << std::fixed << std::setprecision(6)
-            << r.stats.ops.aggregation << ",\n";
-        out << "            \"sort\": " << std::fixed << std::setprecision(6) << r.stats.ops.sort
-            << ",\n";
-        out << "            \"other\": " << std::fixed << std::setprecision(6) << r.stats.ops.other
-            << "\n";
-        out << "        }\n";
+        out << "        \"operators_time\": {\n";
+        for (size_t j = 0; j < std::size(OPERATOR_FIELDS); ++j) {
+            const auto &[name, member] = OPERATOR_FIELDS[j];
+            out << "            \"" << name << "\": " << std::fixed << std::setprecision(6)
+                << (r.stats.ops.*member).time << (j < std::size(OPERATOR_FIELDS) - 1 ? "," : "")
+                << "\n";
+        }
+        out << "        },\n";
+        out << "        \"operators_cardinalities\": {\n";
+        for (size_t j = 0; j < std::size(OPERATOR_FIELDS); ++j) {
+            const auto &[name, member] = OPERATOR_FIELDS[j];
+            out << "            \"" << name << "\": " << (r.stats.ops.*member).cardinality
+                << (j < std::size(OPERATOR_FIELDS) - 1 ? "," : "") << "\n";
+        }
+        out << "        }" << (config.source == Source::OASIS ? "," : "") << "\n";
+        if (config.source == Source::OASIS) {
+            out << "        \"oasis\": {\n";
+            out << "            \"scan_filter\": " << std::fixed << std::setprecision(6)
+                << r.stats.ops.scan_filter << ",\n";
+            out << "            \"string_decode\": " << std::fixed << std::setprecision(6)
+                << r.stats.ops.string_decode << "\n";
+            out << "        }\n";
+        }
         out << "    }" << (i < results.size() - 1 ? "," : "") << "\n";
     }
     out << "]\n";

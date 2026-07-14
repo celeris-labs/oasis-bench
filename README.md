@@ -42,3 +42,5 @@ sudo hdev set hugepages -g 32 -n 1
 ../coyote/util/program_hacc_local.sh /scratch/<nethz-user>/bitstreams/oasis/<build-dir>/cyt_top.bit ../coyote/driver/build/coyote_driver.ko
 ./scripts/run.sh
 ```
+
+You should also disable logging in the Coyote driver

@@ -13,6 +13,7 @@ from matplotlib.legend_handler import HandlerTuple
 
 REPO_ROOT = Path(__file__).parent.parent
 MEASUREMENTS_DIR = REPO_ROOT / "measurements" / "throughput" / "sf-30-4"
+QUERIES_DIR = REPO_ROOT / "measurements" / "queries"
 QUERIES_PER_RUN = 22 * 4  # TPC-H runs 22 queries on 4 streams
 
 BASELINE = "parquet"  # parquet read over the network (rdma)
@@ -23,6 +24,7 @@ PHYSICAL_CORES = 16
 MAX_THREADS = 32  # show hyperthreading up to here, ignore measurements beyond
 
 PARQUET_COLOR = "#B8860B"  # dark yellow: duckdb
+PARQUET_LIGHT_COLOR = "#E2C06A"  # light tint of PARQUET_COLOR for stacking
 PARQUET_DISK_COLOR = "#7B3294"  # purple: duckdb parquet from local disk
 MEMORY_COLOR = "#00695C"  # teal: duckdb in-memory tables
 
@@ -34,6 +36,10 @@ DECODER_COLORS = {
     2: "#6495C9",
     1: "#8AB0DA",
 }
+
+# Parts of the oasis scan time (colorblind-safe against the blues above).
+OASIS_FILTER_COLOR = "#D55E00"  # vermillion: filtering inside the scan
+OASIS_DECODE_COLOR = "#009E73"  # green: string decoding inside the scan
 
 
 def load_measurements():
@@ -54,6 +60,23 @@ def load_measurements():
         key = (source, m.get("decoders", m.get("oasis_num_streams", 0)))
         runtime[key][m["threads"]] = m["runtime_sec"]
     return runtime
+
+
+def load_query_measurements():
+    """Latest per-query results for each source (newest file wins)."""
+    runs = {}
+    for path in sorted(QUERIES_DIR.glob("*.json"), key=lambda p: int(p.stem)):
+        with open(path) as f:
+            results = json.load(f)
+        if results:
+            results.sort(key=lambda r: r["query"])
+            runs[results[0]["source"]] = results
+    return runs
+
+
+def operator_times(r):
+    """Per-operator CPU times; falls back to the pre-rename "operators" key."""
+    return r.get("operators_time", r.get("operators"))
 
 
 def series_style(source, decoders):
@@ -141,32 +164,33 @@ def main():
     order = sorted((k for k in runtime if k[0] not in (MEMORY, PARQUET_DISK)),
                    key=lambda k: (k[0] != BASELINE, k[1]))
 
-    # Absolute throughput: parquet baseline and oasis, up to 24 threads.
+    # Absolute throughput: parquet baseline and oasis, up to 25 threads
+    # (one point past 24 shows the curves stay flat).
     fig, ax = new_figure(max_threads=24)
 
-    def qph24(points):
-        return qph([(t, rt) for t, rt in points if t <= 24])
+    def qph25(points):
+        return qph([(t, rt) for t, rt in points if t <= 25])
 
     for key in order:
-        plot_series(ax, runtime, key, qph24)
+        plot_series(ax, runtime, key, qph25)
     ax.set_ylabel("TPC-H throughput (Q/h)")
     outline = [path_effects.withStroke(linewidth=3, foreground="white")]
 
     # Oasis with 4 decoders on 5 threads already almost matches the
     # parquet extension at any thread count.
-    oasis4_5 = QUERIES_PER_RUN / runtime[("oasis", 4)][5] * 3600
-    ax.axhline(oasis4_5, color="black", linestyle="--", linewidth=1, zorder=0)
-    ax.text(23.6, oasis4_5 + 60, f"{oasis4_5:,.0f} Q/h",
-            ha="right", va="bottom", path_effects=outline)
-    ax.annotate("5 threads", xy=(5, oasis4_5), xytext=(3, 4400),
-                ha="center", va="bottom", path_effects=outline,
-                arrowprops=dict(arrowstyle="->", color="black", linewidth=1))
+    # oasis4_5 = QUERIES_PER_RUN / runtime[("oasis", 4)][5] * 3600
+    # ax.axhline(oasis4_5, color="black", linestyle="--", linewidth=1, zorder=0)
+    # ax.text(24.6, oasis4_5 + 60, f"{oasis4_5:,.0f} Q/h",
+    #         ha="right", va="bottom", path_effects=outline)
+    # ax.annotate("5 threads", xy=(5, oasis4_5), xytext=(3, 4400),
+    #             ha="center", va="bottom", path_effects=outline,
+    #             arrowprops=dict(arrowstyle="->", color="black", linewidth=1))
 
     # Speedup of oasis (4 decoders) over parquet at 16 threads.
     oasis4_16 = QUERIES_PER_RUN / runtime[("oasis", 4)][16] * 3600
     parquet_16 = QUERIES_PER_RUN / runtime[(BASELINE, 0)][16] * 3600
     ax.annotate("", xy=(16, oasis4_16), xytext=(16, parquet_16),
-                arrowprops=dict(arrowstyle="<->", color="black", linewidth=1))
+                arrowprops=dict(arrowstyle="->", color="black", linewidth=1))
     ax.text(15.6, (oasis4_16 + parquet_16) / 2,
             f"{oasis4_16 / parquet_16:.1f}x",
             ha="right", va="center", path_effects=outline)
@@ -193,19 +217,73 @@ def main():
         plot_series(ax, runtime, key, qph)
     ax.set_ylabel("TPC-H throughput (Q/h)")
 
-    # Speedup of memory over parquet from disk at 16 threads.
+    # Slowdown of parquet from disk vs. memory at 32 threads.
     memory_32 = QUERIES_PER_RUN / runtime[(MEMORY, 0)][32] * 3600
     disk_32 = QUERIES_PER_RUN / runtime[(PARQUET_DISK, 0)][32] * 3600
     ax.annotate("", xy=(32, memory_32), xytext=(32, disk_32),
-                arrowprops=dict(arrowstyle="<->", color="black", linewidth=1))
+                arrowprops=dict(arrowstyle="<-", color="black", linewidth=1))
     ax.text(31.6, (memory_32 + disk_32) / 2,
-            f"{memory_32 / disk_32:.1f}x",
+            f"{disk_32 / memory_32:.2f}x",
             ha="right", va="center",
             path_effects=[path_effects.withStroke(linewidth=3,
                                                   foreground="white")])
 
     add_legend(fig, ax, labels=["In-memory", "Parquet files"], ncol=2)
     save(fig, "introduction.pdf")
+
+    # Per-query runtime: parquet as one bar, oasis split into the scan
+    # (with the filter and string-decode time the extension reports) and
+    # the remaining operators. Operator times are CPU seconds summed over
+    # all threads, so attribute wall-clock runtime by CPU share.
+    runs = load_query_measurements()
+    fig, ax = plt.subplots(figsize=(9, 2.5), layout="constrained")
+    queries = range(1, len(runs[BASELINE]) + 1)
+    width = 0.34
+    gap = 0.04  # between the parquet and oasis bars of a query
+    bar_style = dict(width=width)
+
+    x = [q - (width + gap) / 2 for q in queries]
+    scan = [r["runtime_sec"] * operator_times(r)["scan"] / r["cpu_time_sec"]
+            for r in runs[BASELINE]]
+    rest = [r["runtime_sec"] - s for r, s in zip(runs[BASELINE], scan)]
+    ax.bar(x, scan, color=PARQUET_COLOR, **bar_style)
+    ax.bar(x, rest, bottom=scan, color=PARQUET_LIGHT_COLOR, **bar_style)
+
+    # Filter and string decode are parts of the scan time, so the bottom
+    # three segments together are the scan and the bar sums to the runtime.
+    segments = []  # bottom to top: string decode, filter, rest of scan, rest
+    for r in runs["oasis"]:
+        wall = r["runtime_sec"] / r["cpu_time_sec"]
+        filter_time = r["oasis"]["scan_filter"] * wall
+        decode_time = r["oasis"]["string_decode"] * wall
+        scan = operator_times(r)["scan"] * wall - filter_time - decode_time
+        rest = r["runtime_sec"] - scan - filter_time - decode_time
+        segments.append((decode_time, filter_time, scan, rest))
+    x = [q + (width + gap) / 2 for q in queries]
+    bottom = [0.0] * len(x)
+    for values, color in zip(zip(*segments),
+                             [OASIS_DECODE_COLOR, OASIS_FILTER_COLOR,
+                              DECODER_COLORS[4], DECODER_COLORS[1]]):
+        ax.bar(x, values, bottom=bottom, color=color, **bar_style)
+        bottom = [b + v for b, v in zip(bottom, values)]
+
+    ax.set_xticks(list(queries), [f"Q{q}" for q in queries])
+    ax.set_xlim(queries[0] - 0.6, queries[-1] + 0.6)
+    ax.set_xlabel("TPC-H query")
+    ax.set_ylabel("Runtime (s)")
+    ax.grid(True, axis="y", color="black", linestyle=":", linewidth=0.5)
+    ax.set_axisbelow(True)
+    c = ax.containers  # both sources' remaining share one legend entry
+    # Legend fills column-major; a blank entry keeps the first row at two
+    # entries (scan and other operators) and the oasis parts on the second.
+    blank = plt.Rectangle((0, 0), 0, 0, color="none")
+    add_legend(fig, ax,
+               handles=[c[0], c[2], (c[1], c[5]), c[3], blank, c[4]],
+               labels=["DuckDB Parquet extension scan",
+                       "Oasis scan (CPU string decode)", "Remaining query",
+                       "Oasis scan (CPU filter)", "", "Oasis scan (overhead)"],
+               ncol=3)
+    save(fig, "queries.pdf")
 
 
 if __name__ == "__main__":
