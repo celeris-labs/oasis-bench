@@ -16,10 +16,11 @@ make -j
 cd ..
 ```
 
-This will produce three executables:
+This will produce four executables:
 - `verify` for verification against the Parquet extension of DuckDB.
 - `throughput` for throughput benchmarks with multiple clients submitting queries to the database as fast as possible.
 - `queries` for per-query benchmarks with operator-level breakdown of runtime.
+- `columns` for per-column scan benchmarks that run every column of every table as a single-column query (e.g. `SELECT l_orderkey FROM lineitem`).
 
 ## Getting the data
 To generate TPC-H scale factor 30 as Parquet files in the directory `./data/tpch-30`, execute:
@@ -43,4 +44,4 @@ sudo hdev set hugepages -g 32 -n 1
 ./scripts/run.sh
 ```
 
-You should also disable logging in the Coyote driver
+*Note: You should disable verbose logging in the Coyote driver because we otherwise fill the disk with interrupt log messages.*

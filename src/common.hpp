@@ -1,3 +1,5 @@
+#pragma once
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -85,9 +87,13 @@ class Timer {
 // Global Setup
 // ============================================================================
 
-// decoders == 0 leaves oasis_scheduler_num_streams at the extension default.
+// decoders == 0 leaves oasis_scheduler_num_streams at the extension default,
+// prefetch_depth < 0 leaves oasis_prefetch_depth at the extension default (0 is
+// a valid depth that turns off async), and enable_yield < 0 leaves
+// oasis_enable_yield at the extension default.
 void global_setup(duckdb::Connection &con, bool rdma, Source source,
-                  const std::string &rdma_ip = "", uint32_t decoders = 0) {
+                  const std::string &rdma_ip = "", uint32_t decoders = 0,
+                  int prefetch_depth = -1, int enable_yield = -1) {
     con.Query("SET GLOBAL enable_external_file_cache TO false");
     con.Query("SET GLOBAL parquet_metadata_cache TO true");
 
@@ -104,6 +110,28 @@ void global_setup(duckdb::Connection &con, bool rdma, Source source,
             if (set_s->HasError()) {
                 throw std::runtime_error("Failed to set oasis_scheduler_num_streams: " +
                                          set_s->GetError());
+            }
+        }
+
+        // GLOBAL so that connections other than this one (the throughput
+        // benchmark queries on one connection per stream) see the value:
+        // these two options have no SET callback, so a session-local SET
+        // would only reach this connection.
+        if (prefetch_depth >= 0) {
+            auto set_p = con.Query("SET GLOBAL oasis_prefetch_depth TO " +
+                                   std::to_string(prefetch_depth));
+            if (set_p->HasError()) {
+                throw std::runtime_error("Failed to set oasis_prefetch_depth: " +
+                                         set_p->GetError());
+            }
+        }
+
+        if (enable_yield >= 0) {
+            auto set_y = con.Query(std::string("SET GLOBAL oasis_enable_yield TO ") +
+                                   (enable_yield ? "true" : "false"));
+            if (set_y->HasError()) {
+                throw std::runtime_error("Failed to set oasis_enable_yield: " +
+                                         set_y->GetError());
             }
         }
 
@@ -229,6 +257,14 @@ void warm_metadata_cache(duckdb::Connection &con, const std::vector<std::string>
 // ============================================================================
 // Arguments
 // ============================================================================
+
+int parse_bool_arg(const std::string &arg) {
+    if (arg == "true" || arg == "on" || arg == "1")
+        return 1;
+    if (arg == "false" || arg == "off" || arg == "0")
+        return 0;
+    throw std::invalid_argument("Invalid boolean (use true/false): " + arg);
+}
 
 std::vector<uint32_t> parse_thread_arg(const std::string &arg) {
     std::vector<uint32_t> threads;

@@ -40,11 +40,13 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # Main benchmark executables
 add_executable(queries    src/queries.cpp)
+add_executable(columns    src/columns.cpp)
 add_executable(throughput src/throughput.cpp)
 add_executable(verify     src/verify.cpp)
 
 # Link executables
 target_link_libraries(queries    PRIVATE ${DUCKDB_TARGET})
+target_link_libraries(columns    PRIVATE ${DUCKDB_TARGET})
 target_link_libraries(throughput PRIVATE ${DUCKDB_TARGET})
 target_link_libraries(verify     PRIVATE ${DUCKDB_TARGET})
 
@@ -71,7 +73,7 @@ endif()
 
 if(JEMALLOC_LINK)
     message(STATUS "Linking jemalloc for oasis extension: ${JEMALLOC_LINK}")
-    foreach(tgt queries throughput verify)
+    foreach(tgt queries columns throughput verify)
         target_link_libraries(${tgt} PRIVATE
             -Wl,--no-as-needed ${JEMALLOC_LINK} -Wl,--as-needed)
     endforeach()
