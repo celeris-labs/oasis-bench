@@ -171,7 +171,7 @@ void print_usage(const char *prog) {
               << "performance across input configurations.\n"
               << "\n"
               << "Options:\n"
-              << "  -b, --benchmark BM    Benchmark: tpch, clickbench (default: tpch)\n"
+              << "  -b, --benchmark BM    Benchmark: tpch, tpcds, clickbench (default: tpch)\n"
               << "  -s, --source SRC      Input source: parquet, memory, oasis (default: parquet)\n"
               << "  -r, --repetitions N   Number of repetitions per query (default: 5)\n"
               << "  -t, --threads N       Number of threads (default: 1)\n"

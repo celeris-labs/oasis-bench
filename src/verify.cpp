@@ -158,7 +158,7 @@ void print_usage(const char *prog) {
               << "Run every query against two sources and verify the results match.\n"
               << "\n"
               << "Options:\n"
-              << "  -b, --benchmark BM    Benchmark: tpch, clickbench (default: tpch)\n"
+              << "  -b, --benchmark BM    Benchmark: tpch, tpcds, clickbench (default: tpch)\n"
               << "  -d, --data-dir DIR    Data directory (default: /mnt/ramdisk)\n"
               << "  -R, --reference SRC   Reference source: parquet, memory, oasis (default: parquet)\n"
               << "  -C, --candidate SRC   Candidate source: parquet, memory, oasis (default: oasis)\n"

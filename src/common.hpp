@@ -12,12 +12,14 @@ namespace fs = std::filesystem;
 // Benchmark types
 // ============================================================================
 
-enum class Benchmark { TPCH = 0, CLICKBENCH = 1 };
+enum class Benchmark { TPCH = 0, TPCDS = 1, CLICKBENCH = 2 };
 
 const char *benchmark_to_string(Benchmark b) {
     switch (b) {
     case Benchmark::TPCH:
         return "tpch";
+    case Benchmark::TPCDS:
+        return "tpcds";
     case Benchmark::CLICKBENCH:
         return "clickbench";
     }
@@ -27,6 +29,8 @@ const char *benchmark_to_string(Benchmark b) {
 Benchmark string_to_benchmark(const std::string &s) {
     if (s == "tpch")
         return Benchmark::TPCH;
+    if (s == "tpcds")
+        return Benchmark::TPCDS;
     if (s == "clickbench")
         return Benchmark::CLICKBENCH;
     throw std::runtime_error("Unknown benchmark: " + s);
@@ -174,6 +178,14 @@ std::vector<std::string> get_table_names(Benchmark benchmark) {
     case Benchmark::TPCH:
         return {"customer", "lineitem", "nation",   "orders",
                 "part",     "partsupp", "region",   "supplier"};
+    case Benchmark::TPCDS:
+        return {"call_center",     "catalog_page",   "catalog_returns", "catalog_sales",
+                "customer",        "customer_address", "customer_demographics",
+                "date_dim",        "household_demographics", "income_band",
+                "inventory",       "item",           "promotion",       "reason",
+                "ship_mode",       "store",          "store_returns",   "store_sales",
+                "time_dim",        "warehouse",      "web_page",        "web_returns",
+                "web_sales",       "web_site"};
     case Benchmark::CLICKBENCH:
         return {"hits"};
     }

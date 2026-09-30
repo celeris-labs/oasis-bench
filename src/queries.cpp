@@ -95,7 +95,7 @@ void print_usage(const char *prog) {
               << "DuckDB benchmark with different input configurations.\n"
               << "\n"
               << "Options:\n"
-              << "  -b, --benchmark BM    Benchmark: tpch, clickbench (default: tpch)\n"
+              << "  -b, --benchmark BM    Benchmark: tpch, tpcds, clickbench (default: tpch)\n"
               << "  -s, --source SRC      Input source: parquet, memory, oasis (default: parquet)\n"
               << "  -r, --repetitions N   Number of repetitions per query (default: 5)\n"
               << "  -t, --threads N       Number of threads (default: 1)\n"
@@ -244,10 +244,6 @@ int main(int argc, char *argv[]) {
 
     // Get queries based on benchmark and source
     std::vector<fs::path> query_paths = get_queries(config.benchmark);
-    // Hardcoded to only run query 4
-    query_paths.erase(std::remove_if(query_paths.begin(), query_paths.end(),
-                                     [](const fs::path &p) { return p.filename() != "q04.sql"; }),
-                      query_paths.end());
 
     auto results = run_benchmark(config, query_paths);
 
