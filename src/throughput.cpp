@@ -262,13 +262,12 @@ void write_json(uint32_t num_threads, const Config &config, const ThroughputResu
         << (result.profiles.empty() ? "" : ",") << "\n";
     if (!result.profiles.empty()) {
         // Output-side cycle counters of the median-runtime repetition's
-        // profile snapshot, split between the hardware decoders and the
-        // bypass stream (the last profile row).
+        // profile snapshot, split between the active hardware decoders and the
+        // bypass stream (all zero on bitstreams without one).
         size_t median_rep =
             std::find(result.runtimes.begin(), result.runtimes.end(), sorted[sorted.size() / 2]) -
             result.runtimes.begin();
         const HardwareProfile &profile = result.profiles[median_rep];
-        uint32_t               bypass  = profile.rows.size() - 1;
 
         auto write_group = [&](const char *name, const OutCycles &cycles, const char *tail) {
             out << "    \"" << name << "\": {\n";
@@ -277,8 +276,8 @@ void write_json(uint32_t num_threads, const Config &config, const ThroughputResu
             out << "        \"out_idle_cycles\": " << cycles.idle << "\n";
             out << "    }" << tail << "\n";
         };
-        write_group("decoders", sum_out_cycles(profile, 0, bypass), ",");
-        write_group("bypass", sum_out_cycles(profile, bypass, bypass + 1), "");
+        write_group("decoders", sum_out_cycles(profile, false, config.decoders), ",");
+        write_group("bypass", sum_out_cycles(profile, true), "");
     }
     out << "}\n";
 

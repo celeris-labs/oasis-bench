@@ -77,20 +77,17 @@ ResultSet collect(duckdb::Connection &con, const std::string &sql, bool &ok, std
         return rs;
     }
 
-    auto &mat = result->Cast<duckdb::MaterializedQueryResult>();
-    rs.column_count = mat.ColumnCount();
+    rs.column_count = result->ColumnCount();
 
-    for (auto chunk = mat.Fetch(); chunk && chunk->size() != 0; chunk = mat.Fetch()) {
-        for (duckdb::idx_t r = 0; r < chunk->size(); ++r) {
-            std::string row;
-            for (duckdb::idx_t c = 0; c < chunk->ColumnCount(); ++c) {
-                if (c != 0) {
-                    row += '\x1f'; // unit separator, unlikely to appear in data
-                }
-                row += format_value(chunk->GetValue(c, r));
+    for (const auto &values : fetch_rows(*result)) {
+        std::string row;
+        for (size_t c = 0; c < values.size(); ++c) {
+            if (c != 0) {
+                row += '\x1f'; // unit separator, unlikely to appear in data
             }
-            rs.rows.push_back(std::move(row));
+            row += format_value(values[c]);
         }
+        rs.rows.push_back(std::move(row));
     }
 
     std::sort(rs.rows.begin(), rs.rows.end());

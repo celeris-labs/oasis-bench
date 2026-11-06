@@ -8,7 +8,9 @@ git submodule update --init
 ```
 
 ## Building the benchmark
-To build the benchmark:
+The benchmark loads the Oasis extension (https://github.com/celeris-labs/oasis), which only loads
+into a DuckDB built from the same commit, so the DuckDB submodule here must be at the same commit as
+the one in `oasis/extension/duckdb`. To build the benchmark:
 ``` bash
 mkdir build && cd build
 cmake ..

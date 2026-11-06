@@ -194,12 +194,14 @@ Statistics measure_query(duckdb::Connection &con, const std::string &sql, int re
 // Hardware counters (oasis_stream_profile)
 // ============================================================================
 
-// One oasis_stream_profile() snapshot: a row of counters per hardware decoder.
-// Values are pre-rendered for JSON output; non-numeric columns get quoted.
+// One oasis_stream_profile() snapshot: a row of counters per hardware decoder,
+// plus one for the RDMA bypass stream on RDMA bitstreams. Values are
+// pre-rendered for JSON output, and non-numeric columns get quoted.
 struct HardwareProfile {
     std::vector<std::string>              names;
     std::vector<bool>                     quoted;
     std::vector<std::vector<std::string>> rows;
+    std::vector<bool>                     bypass; // per row: the bypass stream (no input counters)
 };
 
 HardwareProfile read_stream_profile(duckdb::Connection &con) {
@@ -210,16 +212,21 @@ HardwareProfile read_stream_profile(duckdb::Connection &con) {
         throw std::runtime_error("Failed to read oasis_stream_profile: " + r->GetError());
     }
 
-    profile.names = r->names;
-    for (const auto &type : r->types) {
+    for (const auto &name : r->GetNames()) {
+        profile.names.push_back(name.GetIdentifierName());
+    }
+    for (const auto &type : r->GetTypes()) {
         profile.quoted.push_back(!type.IsNumeric());
     }
-    for (size_t row = 0; row < r->RowCount(); ++row) {
+    size_t in_handshakes = static_cast<size_t>(
+        std::find(profile.names.begin(), profile.names.end(), "in_handshakes_cycles") - profile.names.begin());
+    for (const auto &row : fetch_rows(*r)) {
         std::vector<std::string> values;
-        for (size_t col = 0; col < r->ColumnCount(); ++col) {
-            values.push_back(r->GetValue(col, row).ToString());
+        for (const auto &value : row) {
+            values.push_back(value.ToString());
         }
         profile.rows.push_back(std::move(values));
+        profile.bypass.push_back(in_handshakes < row.size() && row[in_handshakes].IsNull());
     }
 
     return profile;
@@ -232,9 +239,10 @@ struct OutCycles {
     uint64_t idle       = 0; // output idle cycles of active decoders
 };
 
-// Sum the output-side cycle counters of a profile snapshot over the rows with
-// begin <= stream < end.
-OutCycles sum_out_cycles(const HardwareProfile &profile, uint32_t begin, uint32_t end) {
+// Sum the output-side cycle counters of a profile snapshot over the bypass row
+// or over the decoder rows with stream < num_decoders (0 = all decoders).
+// Decoders the scheduler does not use keep stale counters from earlier runs.
+OutCycles sum_out_cycles(const HardwareProfile &profile, bool bypass, uint32_t num_decoders = 0) {
     auto col = [&](const std::string &name) {
         auto it = std::find(profile.names.begin(), profile.names.end(), name);
         if (it == profile.names.end()) {
@@ -249,9 +257,10 @@ OutCycles sum_out_cycles(const HardwareProfile &profile, uint32_t begin, uint32_
     size_t idle       = col("out_idle_cycles");
 
     OutCycles cycles;
-    for (const auto &row : profile.rows) {
-        uint64_t stream_id = std::stoull(row[stream]);
-        if (stream_id < begin || stream_id >= end) {
+    for (size_t i = 0; i < profile.rows.size(); ++i) {
+        const auto &row       = profile.rows[i];
+        uint64_t    stream_id = std::stoull(row[stream]);
+        if (profile.bypass[i] != bypass || (!bypass && num_decoders > 0 && stream_id >= num_decoders)) {
             continue;
         }
         uint64_t h  = std::stoull(row[handshakes]);
