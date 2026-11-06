@@ -88,6 +88,25 @@ class Timer {
 };
 
 // ============================================================================
+// Query results
+// ============================================================================
+
+std::vector<std::vector<duckdb::Value>> fetch_rows(duckdb::QueryResult &result) {
+    std::vector<std::vector<duckdb::Value>> rows;
+    for (auto chunk = result.Fetch(); chunk && chunk->size() != 0; chunk = result.Fetch()) {
+        for (duckdb::idx_t r = 0; r < chunk->size(); ++r) {
+            std::vector<duckdb::Value> row;
+            row.reserve(chunk->ColumnCount());
+            for (duckdb::idx_t c = 0; c < chunk->ColumnCount(); ++c) {
+                row.push_back(chunk->GetValue(c, r));
+            }
+            rows.push_back(std::move(row));
+        }
+    }
+    return rows;
+}
+
+// ============================================================================
 // Global Setup
 // ============================================================================
 

@@ -51,11 +51,12 @@ OutCycles read_out_cycles(duckdb::Connection &con, uint32_t decoders) {
         throw std::runtime_error("Failed to read oasis_stream_profile: " + r->GetError());
     }
 
+    auto      row = fetch_rows(*r).at(0);
     OutCycles cycles;
-    cycles.total      = r->GetValue(0, 0).GetValue<uint64_t>();
-    cycles.handshakes = r->GetValue(1, 0).GetValue<uint64_t>();
-    cycles.stalled    = r->GetValue(2, 0).GetValue<uint64_t>();
-    cycles.idle       = r->GetValue(3, 0).GetValue<uint64_t>();
+    cycles.total      = row[0].GetValue<uint64_t>();
+    cycles.handshakes = row[1].GetValue<uint64_t>();
+    cycles.stalled    = row[2].GetValue<uint64_t>();
+    cycles.idle       = row[3].GetValue<uint64_t>();
     return cycles;
 }
 
@@ -117,11 +118,11 @@ std::vector<ColumnResult> run_benchmark(const Config &config) {
             throw std::runtime_error("Failed to count table '" + table +
                                      "': " + count->GetError());
         }
-        uint64_t rows_scanned = count->GetValue(0, 0).GetValue<uint64_t>();
+        uint64_t rows_scanned = fetch_rows(*count).at(0)[0].GetValue<uint64_t>();
 
-        for (size_t row = 0; row < desc->RowCount(); ++row) {
-            std::string column = desc->GetValue(0, row).ToString();
-            std::string type   = desc->GetValue(1, row).ToString();
+        for (const auto &row : fetch_rows(*desc)) {
+            std::string column = row[0].ToString();
+            std::string type   = row[1].ToString();
             std::string sql    = "SELECT " + column + " FROM " + table;
 
             std::cout << "Running " << sql << "..." << std::endl;
